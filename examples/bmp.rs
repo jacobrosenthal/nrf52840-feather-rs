@@ -1,38 +1,30 @@
 //! The rust-toolchain will pull in the correct nightly and target so all you
 //! need to run is
 //!
-//! Feather xenon
-//! https://docs.particle.io/datasheets/discontinued/xenon-datasheet/
-//! https://docs.particle.io/assets/images/xenon/xenon-pinout-v1.0.pdf
-//! https://docs.particle.io/assets/images/xenon/xenon-block-diagram.png
+//! Feather nrf52840 express
+//! https://www.adafruit.com/product/4062
+//! https://learn.adafruit.com/introducing-the-adafruit-nrf52840-feather?view=all
+//! https://learn.adafruit.com/assets/68545/
 //!
-//! antenna selection
-//! p025 = 0, p0.24 = 1 pcb antenna
-//! p025 = 1, p0.24 = 0 external u.fl
-//!
-//! p0.13 red rgb
-//! p0.14 green rgb
-//! p0.15 blue rgb
-//! p0.11 button
-//! p1.12 blue led
-//!
-//! p0.27 scl
-//! p0.26 sda
+//! P1.02 button
+//! P0.16 nopixl
 //!
 //! thinkink
-//! p1.01 sd_cs
-//! p0.31 ss
-//! p1.10 sram_cs d5 6  
+//! p0_14 sck
+//! p0_13 mosi
+//! p0_15 miso
+//! skip 3
 //!
-//! xenon is not really a feather is it
-//! ssd1680
-//! p1.08   cs   xenon d4 featherd9
-//! p1.02   dc   xenon d3 featherd10
-//! p1.15   sck
-//! p1.13   mosi
+//! P0_27 10 dc
+//! P0_26 9 cs
+//! P0_07 6 srcs
+//! P1_08 5 sd cs
+//! skip 2
+//!
+//! p1_14 busy not connected, just us as sacrificial
+//! p1_13 rst not connected, just us as sacrificial
 //!
 //! DEFMT_LOG=trace cargo run --release --example bmp
-//!
 #![no_main]
 #![no_std]
 #![feature(type_alias_impl_trait)]
@@ -110,21 +102,21 @@ pub async fn display_task() {
     let mut spim = spim::Spim::new(
         &mut dp.SPI3,
         &mut spim_irq,
-        &mut dp.P1_15,
+        &mut dp.P0_14,
         NoPin,
-        &mut dp.P1_13,
+        &mut dp.P0_13,
         spim_config,
     );
 
-    //  busy pin isnt accessible.. just a sacrificial pin dp.P0_16 pulled down?
-    let busy = gpio::Input::new(dp.P0_16, gpio::Pull::Down);
-    // reset likewise not connected
-    let rst = gpio::Output::new(dp.P0_18, gpio::Level::High, gpio::OutputDrive::Standard);
-    let cs = gpio::Output::new(dp.P1_08, gpio::Level::High, gpio::OutputDrive::Standard);
-    let dc = gpio::Output::new(dp.P1_02, gpio::Level::Low, gpio::OutputDrive::Standard);
+    //  not connected, just us as sacrificial
+    let busy = gpio::Input::new(dp.P1_14, gpio::Pull::Down);
+    // not connected, just us as sacrificial
+    let reset = gpio::Output::new(dp.P1_13, gpio::Level::High, gpio::OutputDrive::Standard);
+    let cs = gpio::Output::new(dp.P0_26, gpio::Level::High, gpio::OutputDrive::Standard);
+    let dc = gpio::Output::new(dp.P0_27, gpio::Level::Low, gpio::OutputDrive::Standard);
 
     let mut epd =
-        Epd2in13::new(&mut spim, cs, busy, dc, rst, &mut Delay).expect("eink initalize error");
+        Epd2in13::new(&mut spim, cs, busy, dc, reset, &mut Delay).expect("eink initalize error");
 
     // // Clear the full screen
     // let _ = epd.clear_frame(&mut spim, &mut Delay);
