@@ -21,6 +21,8 @@ embassy-nrf = { version = "0.1.0", git = "https://github.com/embassy-rs/embassy"
 epd-waveshare = { version = "0.5.0", path = "../epd-waveshare" }
 defmt = "0.3.0"
 defmt-rtt = "0.3.1"
+smart-leds = "0.3.0"
+panic-probe = "0.3.0"
 
 [patch.crates-io]
 embassy = { git = "https://github.com/embassy-rs/embassy" }
