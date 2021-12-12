@@ -52,27 +52,27 @@ pub fn fill_buf(color: &RGB8, buf: &mut [u16]) -> Result<(), ()> {
     let green = color.g.reverse_bits();
     let blue = color.b.reverse_bits();
 
-    for g in 0..8 {
+    for (g, item) in buf.iter_mut().enumerate().take(8) {
         if ((green >> g) & 0b1) == 0b1 {
-            buf[g] = 0x8000 | 13;
+            *item = 0x8000 | 13;
         } else {
-            buf[g] = 0x8000 | 5;
+            *item = 0x8000 | 5;
         }
     }
 
-    for r in 0..8 {
+    for (r, item) in buf.iter_mut().enumerate().skip(8).take(8) {
         if ((red >> r) & 0b1) == 0b1 {
-            buf[8 + r] = 0x8000 | 13;
+            *item = 0x8000 | 13;
         } else {
-            buf[8 + r] = 0x8000 | 5;
+            *item = 0x8000 | 5;
         }
     }
 
-    for b in 0..8 {
+    for (b, item) in buf.iter_mut().enumerate().skip(16).take(8) {
         if ((blue >> b) & 0b1) == 0b1 {
-            buf[16 + b] = 0x8000 | 13;
+            *item = 0x8000 | 13;
         } else {
-            buf[16 + b] = 0x8000 | 5;
+            *item = 0x8000 | 5;
         }
     }
 
