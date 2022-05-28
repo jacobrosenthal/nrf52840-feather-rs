@@ -6,45 +6,56 @@
 //! https://learn.adafruit.com/introducing-the-adafruit-nrf52840-feather?view=all
 //! https://learn.adafruit.com/assets/68545/
 //!
-//! P1.02 button
-//! P0.16 nopixl
+//! Adafruit 2.13" Monochrome eInk / ePaper Display FeatherWing
+//! https://www.adafruit.com/product/4195
+//! https://learn.adafruit.com/adafruit-2-13-eink-display-breakouts-and-featherwings?view=all
+//! As of April 27, 2020 we're selling a version with SSD1680 chipset, instead of the SSD1675 chipset
+//! Busy and Rst pin not connected
+//!
+//! P1_02 button
+//! P0_16 neopixel
+//! P1_10 led blue
+//! P1_15 led red
 //!
 //! thinkink
-//! p0_14 sck
-//! p0_13 mosi
-//! p0_15 miso
+//! P0_14 sck
+//! P0_13 mosi
+//! P0_15 miso
 //! skip 3
+//! P0_30 rst MUST SOLDER
 //!
+//! P0_06 11 busy MUST SOLDER
 //! P0_27 10 dc
 //! P0_26 9 cs
 //! P0_07 6 srcs
 //! P1_08 5 sd cs
 //! skip 2
 //!
-//! p1_14 busy not connected, just us as sacrificial
-//! p1_13 rst not connected, just us as sacrificial
-//!
-//! DEFMT_LOG=trace cargo run --release --example bmp
+//! DEFMT_LOG=trace cargo run --release --example ssd1680
 #![no_main]
 #![no_std]
 #![feature(type_alias_impl_trait)]
 
 use defmt::info;
 use defmt_rtt as _;
-mod ssd1680;
+use panic_probe as _;
 
 use core::future::pending;
 use embassy::interrupt::InterruptExt;
 use embassy::time::{Delay, Duration, Timer};
 use embassy::util::Forever;
-use embassy_nrf::gpio::{self, AnyPin, NoPin, Pin};
+use embassy_nrf::gpio::{self, AnyPin, Pin};
 use embassy_nrf::{interrupt, spim};
-use embedded_graphics::mono_font::MonoTextStyleBuilder;
-use embedded_graphics::prelude::*;
-use embedded_graphics::primitives::{Circle, Line, PrimitiveStyle};
-use embedded_graphics::text::{Baseline, Text, TextStyleBuilder};
-use embedded_hal::digital::v2::OutputPin;
-use ssd1680::{display, power_up, HEIGHT, WIDTH};
+use embedded_graphics::{
+    mono_font::MonoTextStyleBuilder,
+    pixelcolor::BinaryColor,
+    prelude::*,
+    primitives::{Circle, PrimitiveStyle, Rectangle},
+    text::{Baseline, Text, TextStyleBuilder},
+};
+use embedded_hal_async::delay::DelayUs;
+use embedded_hal_async::spi::ExclusiveDevice;
+use ssd1680::{DisplayRotation, Ssd1680};
 
 // we make a lazily created static
 static EXECUTOR: Forever<embassy::executor::Executor> = Forever::new();
@@ -58,12 +69,12 @@ fn main() -> ! {
     let executor = EXECUTOR.put(embassy::executor::Executor::new());
 
     // provides the peripherals from the async first pac if you selected it
-    let dp = embassy_nrf::init(Default::default());
+    let dp = embassy_nrf::init(embassy_config());
 
     let blue = gpio::Output::new(
         // degrade just a typesystem hack to forget which pin it is so we can
         // call it Anypin and make our function calls more generic
-        dp.P1_12.degrade(),
+        dp.P1_10.degrade(),
         gpio::Level::High,
         gpio::OutputDrive::Standard,
     );
@@ -78,9 +89,9 @@ fn main() -> ! {
 #[embassy::task]
 async fn blinky_task(mut led: gpio::Output<'static, AnyPin>) {
     loop {
-        led.set_high().unwrap();
+        led.set_high();
         Timer::after(Duration::from_millis(300)).await;
-        led.set_low().unwrap();
+        led.set_low();
         Timer::after(Duration::from_millis(1000)).await;
     }
 }
@@ -97,46 +108,54 @@ pub async fn display_task() {
 
     let mut spim_config = spim::Config::default();
     spim_config.frequency = spim::Frequency::M4;
-    let mut spim = spim::Spim::new(
+    let spim = spim::Spim::new_txonly(
         &mut dp.SPI3,
         &mut spim_irq,
         &mut dp.P0_14,
-        NoPin,
         &mut dp.P0_13,
         spim_config,
     );
 
-    let mut cs = gpio::Output::new(
+    let cs = gpio::Output::new(
         dp.P0_26.degrade(),
-        gpio::Level::High,
+        gpio::Level::Low,
         gpio::OutputDrive::Standard,
     );
-    let mut dc = gpio::Output::new(
+    let spi_dev = ExclusiveDevice::new(spim, cs);
+
+    let dc = gpio::Output::new(
         dp.P0_27.degrade(),
         gpio::Level::Low,
         gpio::OutputDrive::Standard,
     );
 
-    let mut buffer = [0u8; WIDTH as usize * HEIGHT as usize / 8];
+    let reset = gpio::Output::new(
+        dp.P0_30.degrade(),
+        gpio::Level::High,
+        gpio::OutputDrive::Standard,
+    );
 
-    Timer::after(Duration::from_millis(500)).await;
-    info!("going!");
+    let busy = gpio::Input::new(dp.P0_06.degrade(), gpio::Pull::Up);
 
-    power_up(&mut spim, &mut cs, &mut dc);
-    Timer::after(Duration::from_millis(500)).await;
-    display(&mut spim, &mut buffer, &mut cs, &mut dc);
-    Timer::after(Duration::from_millis(500)).await;
+    let mut ssd1680 = Ssd1680::new(spi_dev, dc, reset, busy, DisplayRotation::Rotate0);
 
-    info!("sleeep!");
+    Rectangle::new(Point::new(0, 0), Size::new(15, 15))
+        .into_styled(PrimitiveStyle::with_fill(BinaryColor::On))
+        .draw(&mut ssd1680)
+        .unwrap();
+
+    ssd1680.flush(&mut Delay).await.unwrap();
+
+    Delay.delay_ms(2000).await.unwrap();
+
+    Rectangle::new(Point::new(0, 0), Size::new(30, 30))
+        .into_styled(PrimitiveStyle::with_fill(BinaryColor::On))
+        .draw(&mut ssd1680)
+        .unwrap();
+
+    ssd1680.flush(&mut Delay).await.unwrap();
 
     pending::<()>().await;
-}
-
-#[panic_handler] // panicking behavior
-fn panic(_: &core::panic::PanicInfo) -> ! {
-    loop {
-        cortex_m::asm::bkpt();
-    }
 }
 
 // WARNING may overflow and wrap-around in long lived apps
@@ -148,5 +167,16 @@ defmt::timestamp! {"{=usize}", {
     let n = COUNT.load(Ordering::Relaxed);
     COUNT.store(n + 1, Ordering::Relaxed);
     n
-}
+}}
+
+// 0 is Highest. Lower prio number can preempt higher prio number
+// Softdevice has reserved priorities 0, 1 and 3
+pub fn embassy_config() -> embassy_nrf::config::Config {
+    let mut config = embassy_nrf::config::Config::default();
+    config.hfclk_source = embassy_nrf::config::HfclkSource::ExternalXtal;
+    config.lfclk_source = embassy_nrf::config::LfclkSource::ExternalXtal;
+    config.time_interrupt_priority = interrupt::Priority::P2;
+    // if we see button misses lower this
+    config.gpiote_interrupt_priority = interrupt::Priority::P7;
+    config
 }
