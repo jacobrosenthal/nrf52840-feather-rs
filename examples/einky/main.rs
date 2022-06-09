@@ -1,4 +1,5 @@
-//! Print battery percentage on screen every 3 hours
+//! The rust-toolchain will pull in the correct nightly and target so all you
+//! need to run is
 //!
 //! Feather nrf52840 express
 //! https://www.adafruit.com/product/4062
@@ -30,11 +31,24 @@
 //! P0_07 6 srcs
 //! P1_08 5 sd cs
 //!
+//! Gain = (1/6) REFERENCE = (0.6 V) RESOLUTION = 12bits
+//! 2^(RESOLUTION) =4096
+//! Max Input = (0.6 V)/(1/6) = 3.6 V
+//! VBAT_MV_PER_LSB = Max Input/ 2^RESOLUTION
+//! VBAT_MV_PER_LSB = 3600mV/4096 =  
+//! V(p) = raw * VdivComp * VBAT_MV_PER_LSB
+//! V(p) = raw * 2 * 3600/4096
+//! V(p) = raw * (7200/4096)
+//!
+//! Percentage = V(p) * 100 / 4200
+//! Percentage = raw * 100 * (7200/4096) / 4200
+//! Percentage = raw * (720000/4096) / 4200
+//! Percentage = raw * 720000/17203200
+//!
 //! DEFMT_LOG=trace cargo run --release --example einky
 #![no_main]
 #![no_std]
 #![feature(type_alias_impl_trait)]
-
 use defmt::info;
 use defmt_rtt as _;
 use panic_probe as _;
@@ -111,19 +125,28 @@ pub async fn display_task() {
         gpio::OutputDrive::Standard,
     );
     let spi_dev = ExclusiveDevice::new(spim, cs);
+
     let dc = gpio::Output::new(
         dp.P0_27.degrade(),
         gpio::Level::Low,
         gpio::OutputDrive::Standard,
     );
+
     let reset = gpio::Output::new(
         dp.P0_30.degrade(),
         gpio::Level::High,
         gpio::OutputDrive::Standard,
     );
+
     let busy = gpio::Input::new(dp.P0_06.degrade(), gpio::Pull::Up);
 
     let mut ssd1680 = Ssd1680::new(spi_dev, dc, reset, busy, DisplayRotation::Rotate0);
+
+    let config = saadc::Config::default();
+    let irq = interrupt::take!(SAADC);
+    let channel_config = saadc::ChannelConfig::single_ended(&mut dp.P0_29);
+    let mut saadc = Saadc::new(dp.SAADC, irq, config, [channel_config]);
+
     let style = MonoTextStyleBuilder::new()
         .font(&embedded_graphics::mono_font::ascii::FONT_10X20)
         .text_color(BinaryColor::On)
@@ -131,41 +154,21 @@ pub async fn display_task() {
         .build();
     let text_style = TextStyleBuilder::new().baseline(Baseline::Top).build();
 
-    let config = saadc::Config::default();
-    let irq = interrupt::take!(SAADC);
-    let channel_config = saadc::ChannelConfig::single_ended(&mut dp.P0_29);
-    let mut saadc = Saadc::new(dp.SAADC, irq, config, [channel_config]);
-
     loop {
         let mut s: String<3> = String::new();
-        get_battery_percentage(&mut s, &mut saadc).await;
+        let mut battery = [0; 1];
+        saadc.sample(&mut battery).await;
+        let percentage = (battery[0] as u32 * 720000 / 17203200) as u8;
+        core::fmt::write(&mut s, format_args!("{}%", percentage)).unwrap();
 
         Text::with_text_style(&s, Point::new(0, 0), style, text_style)
             .draw(&mut ssd1680)
             .unwrap();
+
         ssd1680.flush(&mut Delay).await.unwrap();
 
         Timer::after(Duration::from_secs(3600 * 3)).await;
     }
-}
-
-// Gain = (1/6) REFERENCE = (0.6 V) Vdiv=1/2 RESOLUTION = 12bits
-// Max Input = (0.6 V)/(1/6) = 3.6 V
-// VBAT_MV_PER_LSB = Max Input/ 2^RESOLUTION
-// VBAT_MV_PER_LSB = 3600mV/4096
-// V(p) = raw * 1/Vdiv * VBAT_MV_PER_LSB
-// V(p) = raw * 2 * 3600/4096
-// V(p) = raw * (7200/4096)
-// Percentage = V(p) * 100 / 4200
-// Percentage = raw * 100 * (7200/4096) / 4200
-// Percentage = raw * (720000/4096) / 4200
-// Percentage = raw * 720000/17203200
-const BATTERY_TRANSLATION: u32 = 720000 / 17203200;
-async fn get_battery_percentage(s: &mut String<3>, saadc: &mut Saadc<'_, 1>) {
-    let mut battery = [0; 1];
-    saadc.sample(&mut battery).await;
-    let percentage = (battery[0] as u32 * BATTERY_TRANSLATION) as u8;
-    core::fmt::write(s, format_args!("{}%", percentage)).unwrap();
 }
 
 // WARNING may overflow and wrap-around in long lived apps
