@@ -50,8 +50,8 @@ use panic_probe as _;
 use embassy::interrupt::InterruptExt;
 use embassy::time::{Delay, Duration, Timer};
 use embassy::util::Forever;
-use embassy_nrf::gpio::{self, Pin};
-use embassy_nrf::saadc::{self, Saadc};
+use embassy_nrf::gpio;
+use embassy_nrf::saadc;
 use embassy_nrf::{interrupt, spim};
 use embedded_graphics::{
     mono_font::MonoTextStyleBuilder,
@@ -74,97 +74,71 @@ fn main() -> ! {
     // once we hit runtime we create and fill that executor finally
     let executor = EXECUTOR.put(embassy::executor::Executor::new());
 
+    // provides the peripherals from the async first pac if you selected it
+    let _dp = embassy_nrf::init(embassy_config());
+
     // spawn tasks
     executor.run(|spawner| {
         let _ = spawner.spawn(display_task());
-        let _ = spawner.spawn(blinky_task());
     })
-}
-
-#[embassy::task]
-async fn blinky_task() {
-    loop {
-        let dp = unsafe { <embassy_nrf::Peripherals as embassy::util::Steal>::steal() };
-
-        let mut led = gpio::Output::new(
-            dp.P1_10.degrade(),
-            gpio::Level::Low,
-            gpio::OutputDrive::Standard,
-        );
-
-        led.set_low();
-        Timer::after(Duration::from_millis(300)).await;
-        led.set_high();
-        Timer::after(Duration::from_millis(1000)).await;
-    }
 }
 
 #[embassy::task]
 pub async fn display_task() {
     let mut dp = unsafe { <embassy_nrf::Peripherals as embassy::util::Steal>::steal() };
-
     let mut spim_irq = interrupt::take!(SPIM3);
     spim_irq.set_priority(interrupt::Priority::P4);
-
-    let mut spim_config = spim::Config::default();
-    spim_config.frequency = spim::Frequency::M4;
-    let spim = spim::Spim::new_txonly(
-        &mut dp.SPI3,
-        &mut spim_irq,
-        &mut dp.P0_14,
-        &mut dp.P0_13,
-        spim_config,
-    );
-
-    let cs = gpio::Output::new(
-        dp.P0_26.degrade(),
-        gpio::Level::Low,
-        gpio::OutputDrive::Standard,
-    );
-    let spi_dev = ExclusiveDevice::new(spim, cs);
-
-    let dc = gpio::Output::new(
-        dp.P0_27.degrade(),
-        gpio::Level::Low,
-        gpio::OutputDrive::Standard,
-    );
-
-    let reset = gpio::Output::new(
-        dp.P0_30.degrade(),
-        gpio::Level::High,
-        gpio::OutputDrive::Standard,
-    );
-
-    let busy = gpio::Input::new(dp.P0_06.degrade(), gpio::Pull::Up);
-
-    let mut ssd1680 = Ssd1680::new(spi_dev, dc, reset, busy, DisplayRotation::Rotate0);
-
-    let config = saadc::Config::default();
-    let irq = interrupt::take!(SAADC);
-    let channel_config = saadc::ChannelConfig::single_ended(&mut dp.P0_29);
-    let mut saadc = Saadc::new(dp.SAADC, irq, config, [channel_config]);
-
-    let style = MonoTextStyleBuilder::new()
-        .font(&embedded_graphics::mono_font::ascii::FONT_10X20)
-        .text_color(BinaryColor::On)
-        .background_color(BinaryColor::Off)
-        .build();
-    let text_style = TextStyleBuilder::new().baseline(Baseline::Top).build();
+    let mut irq = interrupt::take!(SAADC);
 
     loop {
-        let mut s: String<3> = String::new();
+        Timer::after(Duration::from_secs(3600 * 3)).await;
+
+        let mut spim_config = spim::Config::default();
+        spim_config.frequency = spim::Frequency::M4;
+        let spim = spim::Spim::new_txonly(
+            &mut dp.SPI3,
+            &mut spim_irq,
+            &mut dp.P0_14,
+            &mut dp.P0_13,
+            spim_config,
+        );
+
+        let cs = gpio::Output::new(&mut dp.P0_26, gpio::Level::Low, gpio::OutputDrive::Standard);
+        let spi_dev = ExclusiveDevice::new(spim, cs);
+        let dc = gpio::Output::new(&mut dp.P0_27, gpio::Level::Low, gpio::OutputDrive::Standard);
+        let busy = gpio::Input::new(&mut dp.P0_06, gpio::Pull::Up);
+        let reset = gpio::Output::new(
+            &mut dp.P0_30,
+            gpio::Level::High,
+            gpio::OutputDrive::Standard,
+        );
+
+        let mut ssd1680 = Ssd1680::new(spi_dev, dc, reset, busy, DisplayRotation::Rotate0);
+        let style = MonoTextStyleBuilder::new()
+            .font(&embedded_graphics::mono_font::ascii::FONT_10X20)
+            .text_color(BinaryColor::On)
+            .background_color(BinaryColor::Off)
+            .build();
+        let text_style = TextStyleBuilder::new().baseline(Baseline::Top).build();
+
+        let config = saadc::Config::default();
+        let channel_config = saadc::ChannelConfig::single_ended(&mut dp.P0_29);
+        let mut saadc = saadc::Saadc::new(&mut dp.SAADC, &mut irq, config, [channel_config]);
+
+        let mut s: String<4> = String::new(); //100% is 4 chars
         let mut battery = [0; 1];
         saadc.sample(&mut battery).await;
         let percentage = (battery[0] as u32 * 720000 / 17203200) as u8;
-        core::fmt::write(&mut s, format_args!("{}%", percentage)).unwrap();
+        let compensated = (percentage + 2).min(100); // runs a little low at 98
+
+        core::fmt::write(&mut s, format_args!("{}%", compensated)).unwrap();
+        info!("{}", &s[..]);
 
         Text::with_text_style(&s, Point::new(0, 0), style, text_style)
             .draw(&mut ssd1680)
             .unwrap();
 
         ssd1680.flush(&mut Delay).await.unwrap();
-
-        Timer::after(Duration::from_secs(3600 * 3)).await;
     }
 }
 
