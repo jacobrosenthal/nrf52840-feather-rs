@@ -1,5 +1,4 @@
-//! The rust-toolchain will pull in the correct nightly and target so all you
-//! need to run is
+//! Print battery percentage on screen every 3 hours
 //!
 //! Feather nrf52840 express
 //! https://www.adafruit.com/product/4062
@@ -31,18 +30,13 @@
 //! P0_07 6 srcs
 //! P1_08 5 sd cs
 //!
-//! Gain = (1/6) REFERENCE = (0.6 V) RESOLUTION = 12bits
-//! 2^(RESOLUTION) =4096
+//! Gain = (1/6) REFERENCE = (0.6 V) RESOLUTION = 12bits VDIV = 1/2
 //! Max Input = (0.6 V)/(1/6) = 3.6 V
 //! VBAT_MV_PER_LSB = Max Input/ 2^RESOLUTION
-//! VBAT_MV_PER_LSB = 3600mV/4096 =  
-//! V(p) = raw * VdivComp * VBAT_MV_PER_LSB
-//! V(p) = raw * 2 * 3600/4096
+//! VBAT_MV_PER_LSB = 3600mV/4096
+//! V(p) = raw * (1/VDIV) * VBAT_MV_PER_LSB
 //! V(p) = raw * (7200/4096)
-//!
 //! Percentage = V(p) * 100 / 4200
-//! Percentage = raw * 100 * (7200/4096) / 4200
-//! Percentage = raw * (720000/4096) / 4200
 //! Percentage = raw * 720000/17203200
 //!
 //! DEFMT_LOG=trace cargo run --release --example einky
@@ -56,7 +50,7 @@ use panic_probe as _;
 use embassy::interrupt::InterruptExt;
 use embassy::time::{Delay, Duration, Timer};
 use embassy::util::Forever;
-use embassy_nrf::gpio::{self, AnyPin, Pin};
+use embassy_nrf::gpio::{self, Pin};
 use embassy_nrf::saadc::{self, Saadc};
 use embassy_nrf::{interrupt, spim};
 use embedded_graphics::{
@@ -80,30 +74,33 @@ fn main() -> ! {
     // once we hit runtime we create and fill that executor finally
     let executor = EXECUTOR.put(embassy::executor::Executor::new());
 
-    // provides the peripherals from the async first pac if you selected it
-    // let dp = embassy_nrf::init(embassy_config());
-
     // spawn tasks
     executor.run(|spawner| {
         let _ = spawner.spawn(display_task());
+        let _ = spawner.spawn(blinky_task());
     })
 }
 
 #[embassy::task]
-async fn blinky_task(mut led: gpio::Output<'static, AnyPin>) {
+async fn blinky_task() {
     loop {
-        led.set_high();
-        Timer::after(Duration::from_millis(300)).await;
+        let dp = unsafe { <embassy_nrf::Peripherals as embassy::util::Steal>::steal() };
+
+        let mut led = gpio::Output::new(
+            dp.P1_10.degrade(),
+            gpio::Level::Low,
+            gpio::OutputDrive::Standard,
+        );
+
         led.set_low();
+        Timer::after(Duration::from_millis(300)).await;
+        led.set_high();
         Timer::after(Duration::from_millis(1000)).await;
     }
 }
 
 #[embassy::task]
 pub async fn display_task() {
-    // Too lazy to pass all the pins and peripherals we need.
-    // Safety: Fragile but safe as long as pins and peripherals arent used
-    // anywhere else
     let mut dp = unsafe { <embassy_nrf::Peripherals as embassy::util::Steal>::steal() };
 
     let mut spim_irq = interrupt::take!(SPIM3);
