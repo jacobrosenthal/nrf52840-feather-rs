@@ -27,6 +27,7 @@ panic-probe = "0.3.0"
 smart-leds = "0.3.0"
 ssd1680 = { path = "../ssd1680-rs" }
 embedded-hal-async = { version = "0.1.0-alpha.1" }
+heapless = "0.7.13"
 
 [patch.crates-io]
 embassy = { git = "https://github.com/embassy-rs/embassy" }
