@@ -95,7 +95,7 @@ pub async fn display_task() {
         //scope so dropped for low power
         {
             let mut spim_config = spim::Config::default();
-            spim_config.frequency = spim::Frequency::M4;
+            spim_config.frequency = spim::Frequency::M32;
             let spim = spim::Spim::new_txonly(
                 &mut dp.SPI3,
                 &mut spim_irq,
