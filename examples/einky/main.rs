@@ -32,12 +32,13 @@
 //!
 //! Gain = (1/6) REFERENCE = (0.6 V) RESOLUTION = 12bits VDIV = 1/2
 //! Max Input = (0.6 V)/(1/6) = 3.6 V
+//! batmin 3000
 //! VBAT_MV_PER_LSB = Max Input/ 2^RESOLUTION
 //! VBAT_MV_PER_LSB = 3600mV/4096
-//! V(p) = raw * (1/VDIV) * VBAT_MV_PER_LSB
-//! V(p) = raw * (7200/4096)
-//! Percentage = V(p) * 100 / 4200
-//! Percentage = raw * 720000/17203200
+//! mv = raw * (1/VDIV) * VBAT_MV_PER_LSB
+//! mv = raw * (7200/4096)
+//! Percentage = (mv - batmin) * (ref) * (vdiv)
+//! Percentage = mv/12 - 3000/12 * (1/12)
 //!
 //! DEFMT_LOG=trace cargo run --release --example einky
 #![no_main]
@@ -91,54 +92,73 @@ pub async fn display_task() {
     let mut irq = interrupt::take!(SAADC);
 
     loop {
-        Timer::after(Duration::from_secs(3600 * 3)).await;
+        //scope so dropped for low power
+        {
+            let mut spim_config = spim::Config::default();
+            spim_config.frequency = spim::Frequency::M4;
+            let spim = spim::Spim::new_txonly(
+                &mut dp.SPI3,
+                &mut spim_irq,
+                &mut dp.P0_14,
+                &mut dp.P0_13,
+                spim_config,
+            );
 
-        let mut spim_config = spim::Config::default();
-        spim_config.frequency = spim::Frequency::M4;
-        let spim = spim::Spim::new_txonly(
-            &mut dp.SPI3,
-            &mut spim_irq,
-            &mut dp.P0_14,
-            &mut dp.P0_13,
-            spim_config,
-        );
+            let cs =
+                gpio::Output::new(&mut dp.P0_26, gpio::Level::Low, gpio::OutputDrive::Standard);
+            let spi_dev = ExclusiveDevice::new(spim, cs);
+            let dc =
+                gpio::Output::new(&mut dp.P0_27, gpio::Level::Low, gpio::OutputDrive::Standard);
+            let busy = gpio::Input::new(&mut dp.P0_06, gpio::Pull::Up);
+            let reset = gpio::Output::new(
+                &mut dp.P0_30,
+                gpio::Level::High,
+                gpio::OutputDrive::Standard,
+            );
 
-        let cs = gpio::Output::new(&mut dp.P0_26, gpio::Level::Low, gpio::OutputDrive::Standard);
-        let spi_dev = ExclusiveDevice::new(spim, cs);
-        let dc = gpio::Output::new(&mut dp.P0_27, gpio::Level::Low, gpio::OutputDrive::Standard);
-        let busy = gpio::Input::new(&mut dp.P0_06, gpio::Pull::Up);
-        let reset = gpio::Output::new(
-            &mut dp.P0_30,
-            gpio::Level::High,
-            gpio::OutputDrive::Standard,
-        );
+            let mut ssd1680 = Ssd1680::new(spi_dev, dc, reset, busy, DisplayRotation::Rotate0);
+            let style = MonoTextStyleBuilder::new()
+                .font(&embedded_graphics::mono_font::ascii::FONT_10X20)
+                .text_color(BinaryColor::On)
+                .background_color(BinaryColor::Off)
+                .build();
+            let text_style = TextStyleBuilder::new().baseline(Baseline::Top).build();
 
-        let mut ssd1680 = Ssd1680::new(spi_dev, dc, reset, busy, DisplayRotation::Rotate0);
-        let style = MonoTextStyleBuilder::new()
-            .font(&embedded_graphics::mono_font::ascii::FONT_10X20)
-            .text_color(BinaryColor::On)
-            .background_color(BinaryColor::Off)
-            .build();
-        let text_style = TextStyleBuilder::new().baseline(Baseline::Top).build();
+            let config = saadc::Config::default();
+            let channel_config = saadc::ChannelConfig::single_ended(&mut dp.P0_29);
+            let mut saadc = saadc::Saadc::new(&mut dp.SAADC, &mut irq, config, [channel_config]);
 
-        let config = saadc::Config::default();
-        let channel_config = saadc::ChannelConfig::single_ended(&mut dp.P0_29);
-        let mut saadc = saadc::Saadc::new(&mut dp.SAADC, &mut irq, config, [channel_config]);
+            let mut raw_string: String<5> = String::new(); //~10000
+            let mut mv_string: String<6> = String::new(); //2200mv
+            let mut percent_string: String<4> = String::new(); //100% is 4 chars
+            let mut battery = [0; 1];
+            saadc.sample(&mut battery).await;
 
-        let mut s: String<4> = String::new(); //100% is 4 chars
-        let mut battery = [0; 1];
-        saadc.sample(&mut battery).await;
-        let percentage = (battery[0] as u32 * 720000 / 17203200) as u8;
-        let compensated = (percentage + 2).min(100); // runs a little low at 98
+            let raw = battery[0] as u32;
+            defmt::info!("{}", raw);
+            core::fmt::write(&mut raw_string, format_args!("{}", raw)).unwrap();
+            Text::with_text_style(&raw_string, Point::new(0, 0), style, text_style)
+                .draw(&mut ssd1680)
+                .unwrap();
 
-        core::fmt::write(&mut s, format_args!("{}%", compensated)).unwrap();
-        info!("{}", &s[..]);
+            let mv = battery[0] as u32 * 7200 / 4096;
+            defmt::info!("{}", mv);
+            core::fmt::write(&mut mv_string, format_args!("{}mv", mv)).unwrap();
+            Text::with_text_style(&mv_string, Point::new(0, 20), style, text_style)
+                .draw(&mut ssd1680)
+                .unwrap();
 
-        Text::with_text_style(&s, Point::new(0, 0), style, text_style)
-            .draw(&mut ssd1680)
-            .unwrap();
+            let percent = mv.max(3001) / 12 - 3000 / 12;
+            let percent = percent.min(100) as u8;
+            defmt::info!("{}", percent);
+            core::fmt::write(&mut percent_string, format_args!("{}%", percent)).unwrap();
+            Text::with_text_style(&percent_string, Point::new(0, 40), style, text_style)
+                .draw(&mut ssd1680)
+                .unwrap();
 
-        ssd1680.flush(&mut Delay).await.unwrap();
+            ssd1680.flush(&mut Delay).await.unwrap();
+        }
+        Timer::after(Duration::from_secs(60 * 60 * 3)).await;
     }
 }
 
