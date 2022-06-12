@@ -1,6 +1,8 @@
 use embassy::time::{Duration, Timer};
-use embassy_nrf::gpio::NoPin;
-use embassy_nrf::pwm::{Prescaler, SequenceConfig, SequenceMode, SequencePwm};
+use embassy_nrf::pwm::{
+    Config as PwmConfig, Prescaler, SequenceConfig, SequencePwm, SingleSequenceMode,
+    SingleSequencer,
+};
 use smart_leds::{colors, RGB8};
 
 #[embassy::task]
@@ -22,21 +24,15 @@ pub async fn neopixel_task() {
             // fill up the first 24 bytes (our single neopixel)
             fill_buf(&color, &mut seq_values[0..24]).unwrap();
 
-            let mut config = SequenceConfig::default();
-            config.prescaler = Prescaler::Div1;
+            let mut config = PwmConfig::default();
             config.max_duty = 20;
+            config.prescaler = Prescaler::Div1;
 
-            let pwm = SequencePwm::new(
-                &mut pwm_peripheral,
-                &mut neopixel,
-                NoPin,
-                NoPin,
-                NoPin,
-                config,
-                &seq_values,
-            )
-            .unwrap();
-            let _ = pwm.start(SequenceMode::Times(1));
+            let mut pwm = SequencePwm::new_1ch(&mut pwm_peripheral, &mut neopixel, config).unwrap();
+
+            let sequencer = SingleSequencer::new(&mut pwm, &seq_values, SequenceConfig::default());
+
+            let _ = sequencer.start(SingleSequenceMode::Times(1));
 
             Timer::after(Duration::from_millis(1000)).await;
         }

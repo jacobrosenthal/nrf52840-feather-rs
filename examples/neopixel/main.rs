@@ -24,7 +24,6 @@ use embassy::time::{Duration, Timer};
 use embassy::util::Forever;
 use embassy_nrf::gpio::{self, AnyPin, Pin};
 use embassy_nrf::interrupt;
-use embedded_hal::digital::v2::OutputPin;
 use neopixel::neopixel_task;
 use panic_probe as _;
 
@@ -60,9 +59,9 @@ fn main() -> ! {
 #[embassy::task]
 async fn blinky_task(mut led: gpio::Output<'static, AnyPin>) {
     loop {
-        led.set_high().unwrap();
+        led.set_high();
         Timer::after(Duration::from_millis(300)).await;
-        led.set_low().unwrap();
+        led.set_low();
         Timer::after(Duration::from_millis(1000)).await;
     }
 }
