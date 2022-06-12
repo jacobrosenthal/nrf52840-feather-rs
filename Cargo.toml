@@ -1,7 +1,9 @@
 [package]
-name = "embassy-nrf"
+name = "nrf52840-feather"
 version = "0.1.0"
 edition = "2021"
+authors = ["Jacob Rosenthal"]
+repository = "https://github.com/jacobrosenthal/nrf52840-feather-rs"
 
 [dependencies]
 embedded-hal = "0.2.7"
