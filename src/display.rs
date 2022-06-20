@@ -22,7 +22,7 @@ use defmt::{info, unwrap};
 use embassy::time::{Delay, Duration, Instant, Timer};
 use embassy::util::{select, Either};
 use embassy_nrf::gpio::{self};
-use embassy_nrf::interrupt::{self, InterruptExt, SAADC, SPIM3};
+use embassy_nrf::interrupt::{self, InterruptExt, SPIM3};
 use embassy_nrf::spim;
 use embedded_graphics::mono_font::MonoTextStyleBuilder;
 use embedded_graphics::pixelcolor::BinaryColor;
@@ -61,6 +61,10 @@ pub async fn display_task() {
 
         info!("timing");
 
+        let mv = battery_mv(&mut saadc_irq).await;
+        let percent = percent_from_mv::<MIN, MAX>(mv);
+        display(&mut spim_irq, minutes, Some(percent)).await;
+
         'timing: loop {
             // count minutes until button press to stop timing
             match select(Timer::after(Duration::from_secs(60)), input.wait_for_low()).await {
@@ -69,7 +73,9 @@ pub async fn display_task() {
                     minutes += 1;
                     // only update screen every 15 minutes
                     if minutes % 15 == 0 {
-                        display(&mut spim_irq, minutes, Some(&mut saadc_irq)).await;
+                        let mv = battery_mv(&mut saadc_irq).await;
+                        let percent = percent_from_mv::<MIN, MAX>(mv);
+                        display(&mut spim_irq, minutes, Some(percent)).await;
                     }
                     continue 'timing;
                 }
@@ -82,7 +88,7 @@ pub async fn display_task() {
     }
 }
 
-async fn display(irq: &mut SPIM3, minutes: u32, saadc_irq: Option<&mut SAADC>) {
+async fn display(irq: &mut SPIM3, minutes: u32, percent: Option<u8>) {
     let mut dp = unsafe { <embassy_nrf::Peripherals as embassy::util::Steal>::steal() };
 
     let mut spim_config = spim::Config::default();
@@ -121,9 +127,7 @@ async fn display(irq: &mut SPIM3, minutes: u32, saadc_irq: Option<&mut SAADC>) {
             .draw(&mut ssd1680)
     );
 
-    if let Some(saddc_interupt) = saadc_irq {
-        let mv = battery_mv(saddc_interupt).await;
-        let percent = percent_from_mv::<MIN, MAX>(mv);
+    if let Some(percent) = percent {
         let percent = percent.min(99); // 100 would move percent off screen
         let mut percent_string: String<3> = String::new(); //99% is 3 chars
         core::fmt::write(&mut percent_string, format_args!("{:02}%", percent)).ok();
