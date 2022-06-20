@@ -13,12 +13,19 @@ use nrf_softdevice::{raw, Softdevice};
 #[nrf_softdevice::gatt_server]
 pub struct Server {
     pub text: TextService,
+    pub battery: BatteryService,
 }
 
 #[nrf_softdevice::gatt_service(uuid = "9e7312e0-2354-11eb-9f10-fbc30a62cf38")]
 pub struct TextService {
     #[characteristic(uuid = "9e7312e0-2354-11eb-9f10-fbc30a63cf38", read, write)]
     pub message: heapless::String<20>,
+}
+
+#[nrf_softdevice::gatt_service(uuid = "180f")]
+pub struct BatteryService {
+    #[characteristic(uuid = "2a19", read, notify)]
+    pub percentage: u8,
 }
 
 // tasks in same executor guaranteed to not be running at same time as they cant interupt eachother
@@ -29,6 +36,7 @@ pub static SERVER: ThreadModeMutex<RefCell<Option<Server>>> =
 pub async fn bluetooth_task(
     sd: &'static Softdevice,
     channel: Sender<'static, ThreadModeRawMutex, bool, 1>,
+    percent: u8,
 ) {
     let dp = unsafe { <embassy_nrf::Peripherals as embassy::util::Steal>::steal() };
 
@@ -38,6 +46,7 @@ pub async fn bluetooth_task(
     unwrap!(server
         .text
         .message_set(heapless::String::from("                    ")));
+    unwrap!(server.battery.percentage_set(percent));
 
     // going to share these with multiple futures which will be created and
     // destroyed complicating lifetimes otherwise
@@ -97,6 +106,11 @@ pub async fn bluetooth_task(
             if let Some(server) = SERVER.borrow().borrow().as_ref() {
                 // Run the GATT server on the connection. This returns when the connection gets disconnected.
                 let gatt_future = gatt_server::run(&conn, server, |e| match e {
+                    ServerEvent::Battery(e) => match e {
+                        BatteryServiceEvent::PercentageCccdWrite { notifications } => {
+                            info!("battery notifications: {}", notifications)
+                        }
+                    },
                     ServerEvent::Text(e) => match e {
                         TextServiceEvent::MessageWrite(val) => {
                             defmt::info!("ble recv {}", val.as_bytes());

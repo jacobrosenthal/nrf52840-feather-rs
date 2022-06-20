@@ -27,6 +27,7 @@ use nrf_softdevice_defmt_rtt as _; // global logger
 use panic_probe as _; // print out panic messages
 mod bluetooth;
 mod display;
+mod saadc;
 
 use bluetooth::{bluetooth_task, softdevice_config, softdevice_task};
 use display::display_task;
@@ -38,7 +39,10 @@ use embassy::util::Forever;
 use embassy_nrf::config::{Config, HfclkSource, LfclkSource};
 use embassy_nrf::{interrupt, Peripherals};
 use nrf_softdevice::Softdevice;
-use nrf_softdevice_s140::{sd_power_dcdc_mode_set, NRF_POWER_DCDC_MODES_NRF_POWER_DCDC_ENABLE};
+use nrf_softdevice_s140::{
+    sd_power_dcdc_mode_set, sd_power_system_off, NRF_POWER_DCDC_MODES_NRF_POWER_DCDC_ENABLE,
+};
+use saadc::{battery_mv, battery_task, percent_from_mv, MAX, MIN};
 
 static CHANNEL: Forever<Channel<ThreadModeRawMutex, bool, 1>> = Forever::new();
 
@@ -51,6 +55,13 @@ async fn main(spawner: Spawner, _dp: Peripherals) {
     let config = softdevice_config();
     let sd = Softdevice::enable(&config);
 
+    let mut saadc_irq = interrupt::take!(SAADC);
+    let mv = battery_mv(&mut saadc_irq).await;
+    let percent = percent_from_mv::<MIN, MAX>(mv);
+    if percent < 1 {
+        unsafe { sd_power_system_off() };
+    }
+
     // save battery
     unsafe {
         sd_power_dcdc_mode_set(NRF_POWER_DCDC_MODES_NRF_POWER_DCDC_ENABLE as u8);
@@ -59,9 +70,10 @@ async fn main(spawner: Spawner, _dp: Peripherals) {
     let c = CHANNEL.put(Channel::new());
 
     unwrap!(spawner.spawn(softdevice_task(sd)));
-    unwrap!(spawner.spawn(bluetooth_task(sd, c.sender())));
+    unwrap!(spawner.spawn(bluetooth_task(sd, c.sender(), percent)));
     // wait till SERVER Mutex is ready
     Timer::after(Duration::from_secs(1)).await;
+    unwrap!(spawner.spawn(battery_task(saadc_irq)));
     unwrap!(spawner.spawn(display_task(c.receiver())));
 }
 

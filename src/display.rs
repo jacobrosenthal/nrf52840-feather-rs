@@ -30,6 +30,7 @@ use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::*;
 use embedded_graphics::text::{Baseline, Text, TextStyleBuilder};
 use embedded_hal_async::spi::ExclusiveDevice;
+use heapless::String;
 use ssd1680::{DisplayRotation, Ssd1680};
 
 #[embassy::task]
@@ -76,6 +77,20 @@ pub async fn display_task(channel: Receiver<'static, ThreadModeRawMutex, bool, 1
 
             unwrap!(
                 Text::with_text_style(&message, Point::new(0, 0), style, text_style)
+                    .draw(&mut ssd1680)
+            );
+
+            let mut percent = unwrap!(server.battery.percentage_get());
+            // 100 would push off screen so 99
+            percent = percent.min(99);
+
+            info!("{=u8}", percent);
+
+            let mut percent_string: String<3> = String::new(); //99% is 3 chars
+            core::fmt::write(&mut percent_string, format_args!("{:02}%", percent)).ok();
+
+            unwrap!(
+                Text::with_text_style(&percent_string, Point::new(220, 0), style, text_style)
                     .draw(&mut ssd1680)
             );
 
