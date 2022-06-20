@@ -17,12 +17,12 @@
 //! P0_07 6 srcs
 //! P1_08 5 sd cs
 
-use crate::saadc::BATTERY;
+use crate::saadc::{battery_mv, percent_from_mv, MAX, MIN};
 use defmt::{info, unwrap};
 use embassy::time::{Delay, Duration, Instant, Timer};
 use embassy::util::{select, Either};
 use embassy_nrf::gpio::{self};
-use embassy_nrf::interrupt::{self, InterruptExt, SPIM3};
+use embassy_nrf::interrupt::{self, InterruptExt, SAADC, SPIM3};
 use embassy_nrf::spim;
 use embedded_graphics::mono_font::MonoTextStyleBuilder;
 use embedded_graphics::pixelcolor::BinaryColor;
@@ -38,27 +38,25 @@ pub async fn display_task() {
     let mut spim_irq = interrupt::take!(SPIM3);
     spim_irq.set_priority(interrupt::Priority::P4);
 
+    let mut saadc_irq = interrupt::take!(SAADC);
     let mut input = gpio::Input::new(&mut dp.P1_02, gpio::Pull::Up);
 
     let mut minutes = 0;
 
     'start: loop {
         info!("waiting");
-        display(&mut spim_irq, minutes).await;
+        display(&mut spim_irq, minutes, None).await;
 
-        // scope to drop pin, check for long press
-        {
-            input.wait_for_low().await;
-            let start = Instant::now();
-            input.wait_for_high().await;
-            let duration = start.elapsed();
+        input.wait_for_low().await;
+        let start = Instant::now();
+        input.wait_for_high().await;
+        let duration = start.elapsed();
 
-            // check for long press and clear display
-            if duration.as_secs() > 2 {
-                info!("reseting");
-                minutes = 0;
-                continue 'start;
-            }
+        // check for long press and clear display
+        if duration.as_secs() > 2 {
+            info!("reseting");
+            minutes = 0;
+            continue 'start;
         }
 
         info!("timing");
@@ -69,7 +67,7 @@ pub async fn display_task() {
                 // timer return just continue
                 Either::First(_) => {
                     minutes += 1;
-                    display(&mut spim_irq, minutes).await;
+                    display(&mut spim_irq, minutes, Some(&mut saadc_irq)).await;
                     continue 'timing;
                 }
                 Either::Second(_val) => {
@@ -81,7 +79,7 @@ pub async fn display_task() {
     }
 }
 
-async fn display(irq: &mut SPIM3, minutes: u32) {
+async fn display(irq: &mut SPIM3, minutes: u32, saadc_irq: Option<&mut SAADC>) {
     let mut dp = unsafe { <embassy_nrf::Peripherals as embassy::util::Steal>::steal() };
 
     let mut spim_config = spim::Config::default();
@@ -120,7 +118,10 @@ async fn display(irq: &mut SPIM3, minutes: u32) {
             .draw(&mut ssd1680)
     );
 
-    if let Some(percent) = BATTERY.borrow().borrow().as_ref() {
+    if let Some(saddc_interupt) = saadc_irq {
+        let mv = battery_mv(saddc_interupt).await;
+        let percent = percent_from_mv::<MIN, MAX>(mv);
+        let percent = percent.min(99); // 100 would move percent off screen
         let mut percent_string: String<3> = String::new(); //99% is 3 chars
         core::fmt::write(&mut percent_string, format_args!("{:02}%", percent)).ok();
         unwrap!(

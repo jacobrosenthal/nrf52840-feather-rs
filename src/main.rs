@@ -32,21 +32,12 @@ use display::display_task;
 use embassy::executor::Spawner;
 use embassy_nrf::config::{Config, HfclkSource, LfclkSource};
 use embassy_nrf::{interrupt, Peripherals};
-use saadc::{battery_mv, battery_task, percent_from_mv, MAX, MIN};
 
 #[embassy::main(config = "embassy_config()")]
 async fn main(spawner: Spawner, _dp: Peripherals) {
     // well use these logging macros instead of println to tunnel our logs via the debug chip
     info!("Hello World!");
 
-    let mut saadc_irq = interrupt::take!(SAADC);
-    let mv = battery_mv(&mut saadc_irq).await;
-    let percent = percent_from_mv::<MIN, MAX>(mv);
-    if percent < 1 {
-        cortex_m::peripheral::SCB::sys_reset();
-    }
-
-    unwrap!(spawner.spawn(battery_task(saadc_irq)));
     unwrap!(spawner.spawn(display_task()));
 }
 
