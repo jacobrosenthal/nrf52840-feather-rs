@@ -67,7 +67,10 @@ pub async fn display_task() {
                 // timer return just continue
                 Either::First(_) => {
                     minutes += 1;
-                    display(&mut spim_irq, minutes, Some(&mut saadc_irq)).await;
+                    // only update screen every 15 minutes
+                    if minutes % 15 == 0 {
+                        display(&mut spim_irq, minutes, Some(&mut saadc_irq)).await;
+                    }
                     continue 'timing;
                 }
                 Either::Second(_val) => {
