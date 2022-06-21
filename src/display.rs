@@ -43,6 +43,11 @@ pub async fn display_task() {
 
     let mut minutes = 0;
 
+    // todo first call on startup with battery not displaying? but does on
+    // debugger? delays dont help? just have to sacrifice a call...gotta be
+    // something to do with pin states or timing?
+    display(&mut spim_irq, minutes, None).await;
+
     'start: loop {
         info!("waiting");
         display(&mut spim_irq, minutes, None).await;
@@ -97,7 +102,11 @@ async fn display(irq: &mut SPIM3, minutes: u32, percent: Option<u8>) {
 
     let cs = gpio::Output::new(&mut dp.P0_26, gpio::Level::Low, gpio::OutputDrive::Standard);
     let spi_dev = ExclusiveDevice::new(spim, cs);
-    let dc = gpio::Output::new(&mut dp.P0_27, gpio::Level::Low, gpio::OutputDrive::Standard);
+    let dc = gpio::Output::new(
+        &mut dp.P0_27,
+        gpio::Level::High,
+        gpio::OutputDrive::Standard,
+    );
     let busy = gpio::Input::new(&mut dp.P0_06, gpio::Pull::Up);
     let reset = gpio::Output::new(
         &mut dp.P0_30,
