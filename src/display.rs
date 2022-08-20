@@ -19,11 +19,11 @@
 
 use crate::saadc::{battery_mv, percent_from_mv, MAX, MIN};
 use defmt::{info, unwrap};
-use embassy_nrf::gpio::{self};
+use embassy_nrf::gpio::{self, AnyPin, Output, Pin};
 use embassy_nrf::interrupt::{self, InterruptExt, SPIM3};
 use embassy_nrf::spim;
 use embassy_time::{Delay, Duration, Instant, Timer};
-use embassy_util::{select, Either};
+use embassy_util::{select, Either, Forever};
 use embedded_graphics::mono_font::MonoTextStyleBuilder;
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::*;
@@ -43,14 +43,20 @@ pub async fn display_task() {
 
     let mut minutes = 0;
 
-    // todo first call on startup with battery not displaying? but does on
-    // debugger? delays dont help? just have to sacrifice a call...gotta be
-    // something to do with pin states or timing?
-    display(&mut spim_irq, minutes, None).await;
+    let mut reset = gpio::Output::new(
+        dp.P0_30.degrade(),
+        gpio::Level::High,
+        gpio::OutputDrive::Standard,
+    );
+    static RESET: Forever<gpio::Output<'static, AnyPin>> = Forever::new();
+    let reset = RESET.put(reset);
+
+    // screen has a 10ms settle time
+    Timer::after(Duration::from_millis(10)).await;
 
     'start: loop {
         info!("waiting");
-        display(&mut spim_irq, minutes, None).await;
+        display(&mut spim_irq, &mut reset, minutes, None).await;
 
         input.wait_for_low().await;
         let start = Instant::now();
@@ -68,7 +74,7 @@ pub async fn display_task() {
 
         let mv = battery_mv(&mut saadc_irq).await;
         let percent = percent_from_mv::<MIN, MAX>(mv);
-        display(&mut spim_irq, minutes, Some(percent)).await;
+        display(&mut spim_irq, &mut reset, minutes, Some(percent)).await;
 
         'timing: loop {
             // count minutes until button press to stop timing
@@ -80,7 +86,7 @@ pub async fn display_task() {
                     if minutes % 15 == 0 {
                         let mv = battery_mv(&mut saadc_irq).await;
                         let percent = percent_from_mv::<MIN, MAX>(mv);
-                        display(&mut spim_irq, minutes, Some(percent)).await;
+                        display(&mut spim_irq, &mut reset, minutes, Some(percent)).await;
                     }
                     continue 'timing;
                 }
@@ -93,7 +99,12 @@ pub async fn display_task() {
     }
 }
 
-async fn display(irq: &mut SPIM3, minutes: u32, percent: Option<u8>) {
+async fn display<'a>(
+    irq: &mut SPIM3,
+    reset: &mut Output<'a, AnyPin>,
+    minutes: u32,
+    percent: Option<u8>,
+) {
     let mut dp = unsafe { embassy_nrf::Peripherals::steal() };
 
     let mut spim_config = spim::Config::default();
@@ -108,13 +119,9 @@ async fn display(irq: &mut SPIM3, minutes: u32, percent: Option<u8>) {
         gpio::OutputDrive::Standard,
     );
     let busy = gpio::Input::new(&mut dp.P0_06, gpio::Pull::Up);
-    let reset = gpio::Output::new(
-        &mut dp.P0_30,
-        gpio::Level::High,
-        gpio::OutputDrive::Standard,
-    );
 
-    let mut ssd1680 = Ssd1680::new(spi_dev, dc, reset, busy, DisplayRotation::Rotate0);
+    let mut ssd1680 = Ssd1680::new(spi_dev, dc, busy, DisplayRotation::Rotate0);
+
     let style = MonoTextStyleBuilder::new()
         .font(&embedded_graphics::mono_font::ascii::FONT_10X20)
         .text_color(BinaryColor::On)
@@ -146,5 +153,5 @@ async fn display(irq: &mut SPIM3, minutes: u32, percent: Option<u8>) {
         );
     }
 
-    ssd1680.flush(&mut Delay).await.ok();
+    ssd1680.flush(&mut Delay, reset).await.unwrap();
 }
