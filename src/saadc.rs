@@ -14,7 +14,7 @@ pub const MIN: u32 = 3400;
 pub const MAX: u32 = 4200;
 
 pub async fn battery_mv(irq: &mut SAADC) -> u32 {
-    let mut dp = unsafe { <embassy_nrf::Peripherals as embassy::util::Steal>::steal() };
+    let mut dp = unsafe { embassy_nrf::Peripherals::steal() };
 
     let config = saadc::Config::default();
     let channel_config = saadc::ChannelConfig::single_ended(&mut dp.P0_29);

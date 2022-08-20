@@ -19,11 +19,11 @@
 
 use crate::saadc::{battery_mv, percent_from_mv, MAX, MIN};
 use defmt::{info, unwrap};
-use embassy::time::{Delay, Duration, Instant, Timer};
-use embassy::util::{select, Either};
 use embassy_nrf::gpio::{self};
 use embassy_nrf::interrupt::{self, InterruptExt, SPIM3};
 use embassy_nrf::spim;
+use embassy_time::{Delay, Duration, Instant, Timer};
+use embassy_util::{select, Either};
 use embedded_graphics::mono_font::MonoTextStyleBuilder;
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::*;
@@ -32,9 +32,9 @@ use embedded_hal_async::spi::ExclusiveDevice;
 use heapless::String;
 use ssd1680::{DisplayRotation, Ssd1680};
 
-#[embassy::task]
+#[embassy_executor::task]
 pub async fn display_task() {
-    let mut dp = unsafe { <embassy_nrf::Peripherals as embassy::util::Steal>::steal() };
+    let mut dp = unsafe { embassy_nrf::Peripherals::steal() };
     let mut spim_irq = interrupt::take!(SPIM3);
     spim_irq.set_priority(interrupt::Priority::P4);
 
@@ -94,7 +94,7 @@ pub async fn display_task() {
 }
 
 async fn display(irq: &mut SPIM3, minutes: u32, percent: Option<u8>) {
-    let mut dp = unsafe { <embassy_nrf::Peripherals as embassy::util::Steal>::steal() };
+    let mut dp = unsafe { embassy_nrf::Peripherals::steal() };
 
     let mut spim_config = spim::Config::default();
     spim_config.frequency = spim::Frequency::M32;

@@ -29,12 +29,14 @@ use defmt_rtt as _;
 mod saadc;
 
 use display::display_task;
-use embassy::executor::Spawner;
+use embassy_executor::Spawner;
 use embassy_nrf::config::{Config, HfclkSource, LfclkSource};
-use embassy_nrf::{interrupt, Peripherals};
+use embassy_nrf::interrupt;
 
-#[embassy::main(config = "embassy_config()")]
-async fn main(spawner: Spawner, _dp: Peripherals) {
+#[embassy_executor::main]
+async fn main(spawner: Spawner) {
+    let _dp = embassy_nrf::init(embassy_config());
+
     // well use these logging macros instead of println to tunnel our logs via the debug chip
     info!("Hello World!");
 
